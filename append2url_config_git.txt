@@ -1,0 +1,16 @@
+Name:
+BaseURL:
+Regex:
+SubURL:
+
+Name:
+BaseURL:
+Regex:
+SubURL:
+Regex:
+SubURL:
+
+Name:
+BaseURL:
+Regex:
+SubURL:

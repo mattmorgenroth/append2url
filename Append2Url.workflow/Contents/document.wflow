@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AMApplicationBuild</key>
+	<string>528</string>
+	<key>AMApplicationVersion</key>
+	<string>2.10</string>
+	<key>AMDocumentVersion</key>
+	<string>2</string>
+	<key>actions</key>
+	<array>
+		<dict>
+			<key>action</key>
+			<dict>
+				<key>AMAccepts</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Optional</key>
+					<true/>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>AMActionVersion</key>
+				<string>1.0.2</string>
+				<key>AMApplication</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>AMParameterProperties</key>
+				<dict>
+					<key>source</key>
+					<dict/>
+				</dict>
+				<key>AMProvides</key>
+				<dict>
+					<key>Container</key>
+					<string>List</string>
+					<key>Types</key>
+					<array>
+						<string>com.apple.applescript.object</string>
+					</array>
+				</dict>
+				<key>ActionBundlePath</key>
+				<string>/System/Library/Automator/Run AppleScript.action</string>
+				<key>ActionName</key>
+				<string>Run AppleScript</string>
+				<key>ActionParameters</key>
+				<dict>
+					<key>source</key>
+					<string>on run {input, parameters}
+    -- Get the selected text as a string (or empty if none selected)
+    set theText to input as text
+    
+    -- Fallback to clipboard if no selected text
+    if theText = "" then
+        try
+            set theText to (clipboard as text)
+            if theText = "" then
+                display dialog "No selected text or clipboard content available."
+                return
+            end if
+        on error
+            display dialog "Clipboard is empty or not text."
+            return
+        end try
+    end if
+    
+    -- Path to config file (use HFS style for better alias compatibility)
+    set configPath to (path to home folder as text) &amp; "append2url_config.txt"
+    
+    -- Default options if config file is missing or invalid
+    set urlOptions to { ¬
+        {name:"Google Search", baseURL:"https://www.google.com/search?q=", pairs:{{regex:"^[0-9]{10}$", subURL:"https://www.google.com/search?num=10&amp;q="}}}, ¬
+        {name:"Wikipedia Lookup", baseURL:"https://en.wikipedia.org/wiki/", pairs:{{regex:"^[A-Z][a-z]+ [A-Z][a-z]+$", subURL:"https://en.wikipedia.org/w/index.php?search="}}}, ¬
+        {name:"YouTube Search", baseURL:"https://www.youtube.com/results?search_query=", pairs:{}} ¬
+    }
+    
+    -- Try to read and parse config file
+    try
+        -- Coerce to alias (HFS path works directly)
+        set configFile to configPath as alias
+        
+        set configContent to paragraphs of (read configFile as «class utf8»)
+        set tempOptions to {}
+        set currentOpt to {name:"", baseURL:"", pairs:{}}  -- Initialize with empty properties
+        repeat with aLine in configContent
+            set trimmedLine to my trim(aLine)
+            if trimmedLine ≠ "" then
+                if trimmedLine starts with "Name:" then
+                    -- If a new Name: is found and current has data, add it and start new
+                    if name of currentOpt ≠ "" then
+                        set end of tempOptions to currentOpt
+                        set currentOpt to {name:"", baseURL:"", pairs:{}}
+                    end if
+                    try
+                        set name of currentOpt to my trim(text 6 thru -1 of trimmedLine)
+                    on error
+                        set name of currentOpt to ""
+                    end try
+                else if trimmedLine starts with "BaseURL:" then
+                    try
+                        set baseURL of currentOpt to my trim(text 9 thru -1 of trimmedLine)
+                    on error
+                        set baseURL of currentOpt to ""
+                    end try
+                else if trimmedLine starts with "Regex:" then
+                    set newPair to {regex:"", subURL:""}
+                    try
+                        set regex of newPair to my trim(text 7 thru -1 of trimmedLine)
+                    on error
+                        set regex of newPair to ""
+                    end try
+                    set end of pairs of currentOpt to newPair
+                else if trimmedLine starts with "SubURL:" then
+                    if (count of pairs of currentOpt) &gt; 0 then
+                        try
+                            set subURL of last item of pairs of currentOpt to my trim(text 8 thru -1 of trimmedLine)
+                        on error
+                            set subURL of last item of pairs of currentOpt to ""
+                        end try
+                    end if
+                end if
+            else if name of currentOpt ≠ "" then  -- Add on blank line if has data
+                set end of tempOptions to currentOpt
+                set currentOpt to {name:"", baseURL:"", pairs:{}}
+            end if
+        end repeat
+        if name of currentOpt ≠ "" then set end of tempOptions to currentOpt -- Last block
+        if tempOptions ≠ {} then 
+            set urlOptions to tempOptions -- Use parsed config if valid
+            -- display dialog "Config loaded successfully: " &amp; (count of urlOptions) &amp; " options" -- Optional: Remove if no longer needed
+        else
+            -- display dialog "Config parsed but empty—using defaults" -- Optional: Remove if no longer needed
+        end if
+    on error errMsg
+        -- display dialog "Config load error: " &amp; errMsg &amp; return &amp; "Path attempted: " &amp; configPath -- Optional: Remove if no longer needed
+    end try
+    
+    -- Build the menu list from option names
+    set nameList to {}
+    repeat with opt in urlOptions
+        set end of nameList to name of opt
+    end repeat
+    
+    -- Show the menu and get user's choice
+    set chosenName to choose from list nameList with prompt "Append '" &amp; theText &amp; "' to which URL?" default items {first item of nameList}
+    if chosenName is false then return -- User canceled
+    
+    -- Find the selected option
+    set selectedOpt to missing value
+    repeat with opt in urlOptions
+        if name of opt = chosenName as text then
+            set selectedOpt to opt
+            exit repeat
+        end if
+    end repeat
+    
+    if selectedOpt is missing value then return -- Error, shouldn't happen
+    
+    -- Determine which URL to use based on regex pairs (check in order, use first match)
+    set chosenURL to baseURL of selectedOpt
+    set thePairs to pairs of selectedOpt
+    repeat with aPair in thePairs
+        set theRegex to regex of aPair
+        if theRegex ≠ "" then
+            -- Use shell grep to check regex match (exit code 0 = match)
+            try
+                do shell script "echo " &amp; quoted form of theText &amp; " | grep -E " &amp; quoted form of theRegex
+                set matchResult to result
+            on error
+                set matchResult to "" -- No match if error (e.g., no output or invalid regex)
+            end try
+            if matchResult ≠ "" then
+                set chosenURL to subURL of aPair
+                exit repeat  -- Use first matching pair
+            end if
+        end if
+    end repeat
+    
+    -- Append the text (URL-encode it for safety using shell)
+    set encodedText to do shell script "printf " &amp; quoted form of theText &amp; " | perl -pe 's/([^a-zA-Z0-9_.-])/sprintf(\"%%%02X\", ord($1))/ge'"
+    
+    -- Build final URL and open in default browser
+    set finalURL to chosenURL &amp; encodedText
+    open location finalURL
+    
+    return input
+end run
+
+-- Trim handler to remove leading/trailing whitespace (preserving inner spaces)
+on trim(thisText)
+    if thisText = "" then return ""
+    set wsChars to {space, tab, return, linefeed}
+    -- Remove leading
+    repeat while (length of thisText &gt; 0) and (character 1 of thisText is in wsChars)
+        set thisText to text 2 thru -1 of thisText
+    end repeat
+    -- Remove trailing
+    repeat while (length of thisText &gt; 0) and (character -1 of thisText is in wsChars)
+        set thisText to text 1 thru -2 of thisText
+    end repeat
+    return thisText
+end trim</string>
+				</dict>
+				<key>BundleIdentifier</key>
+				<string>com.apple.Automator.RunScript</string>
+				<key>CFBundleVersion</key>
+				<string>1.0.2</string>
+				<key>CanShowSelectedItemsWhenRun</key>
+				<false/>
+				<key>CanShowWhenRun</key>
+				<true/>
+				<key>Category</key>
+				<array>
+					<string>AMCategoryUtilities</string>
+				</array>
+				<key>Class Name</key>
+				<string>RunScriptAction</string>
+				<key>InputUUID</key>
+				<string>C16A7E68-6ED8-4073-BE5C-0F52A4847A12</string>
+				<key>Keywords</key>
+				<array>
+					<string>Run</string>
+				</array>
+				<key>OutputUUID</key>
+				<string>E40CCE25-EE1A-4FE1-9CCF-BADF534D5730</string>
+				<key>UUID</key>
+				<string>A954617F-87DD-4094-A46E-630931B22C66</string>
+				<key>UnlocalizedApplications</key>
+				<array>
+					<string>Automator</string>
+				</array>
+				<key>arguments</key>
+				<dict>
+					<key>0</key>
+					<dict>
+						<key>default value</key>
+						<string>on run {input, parameters}
+	
+	(* Your script goes here *)
+	
+	return input
+end run</string>
+						<key>name</key>
+						<string>source</string>
+						<key>required</key>
+						<string>0</string>
+						<key>type</key>
+						<string>0</string>
+						<key>uuid</key>
+						<string>0</string>
+					</dict>
+				</dict>
+				<key>isViewVisible</key>
+				<integer>1</integer>
+				<key>location</key>
+				<string>606.500000:899.000000</string>
+				<key>nibPath</key>
+				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
+			</dict>
+			<key>isViewVisible</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>connectors</key>
+	<dict/>
+	<key>workflowMetaData</key>
+	<dict>
+		<key>applicationBundleIDsByPath</key>
+		<dict/>
+		<key>applicationPaths</key>
+		<array/>
+		<key>inputTypeIdentifier</key>
+		<string>com.apple.Automator.text</string>
+		<key>outputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>presentationMode</key>
+		<integer>11</integer>
+		<key>processesInput</key>
+		<false/>
+		<key>serviceInputTypeIdentifier</key>
+		<string>com.apple.Automator.text</string>
+		<key>serviceOutputTypeIdentifier</key>
+		<string>com.apple.Automator.nothing</string>
+		<key>serviceProcessesInput</key>
+		<false/>
+		<key>systemImageName</key>
+		<string>NSActionTemplate</string>
+		<key>useAutomaticInputType</key>
+		<false/>
+		<key>workflowTypeIdentifier</key>
+		<string>com.apple.Automator.servicesMenu</string>
+	</dict>
+</dict>
+</plist>
